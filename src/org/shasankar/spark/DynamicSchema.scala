@@ -19,7 +19,7 @@ object DynamicSchema {
     val rowRDD = input
       .map(_.split(","))
       .map(attributes => Row.fromSeq(attributes))
-    val peopleDF = spark.createDataFrame(rowRDD, schema)
+    val peopleDF = spark.createDataFrame(rowRDD, schema).selectExpr("name","cast(age as int) age")
 
     // Creates a temporary view using the DataFrame
     peopleDF.createOrReplaceTempView("people")
