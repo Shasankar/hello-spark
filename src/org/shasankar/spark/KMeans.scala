@@ -1,3 +1,4 @@
+// program to get K-Means in a cluster of 2D points
 package org.shasankar.spark
 
 import org.apache.spark._
@@ -26,19 +27,44 @@ object KMeans {
     val Array(x, y) = line.split(",")
     (x.toDouble, y.toDouble)
   }
-  def calcDist(points: ((Double,Double),(Double,Double))) = {
-    val ((x1,y1),(x2,y2)) = points
+  def calcDist(points: ((Double, Double), (Double, Double))) = {
+    val ((x1, y1), (x2, y2)) = points
     val dist = sqrt(pow((x1 - x2), 2) + pow((y1 - y2), 2))
     ((x1, y1), (x2, y2), dist)
+  }
+  def mkPointKey(centerPointDist: ((Double, Double), (Double, Double), Double)) = {
+    val (center, point, dist) = centerPointDist
+    (point, (center, dist))
+  }
+  def getClosestCenter(center1: ((Double, Double), Double), center2: ((Double, Double), Double)) = {
+    if (center1._2 < center2._2) center1 else center2
+  }
+  def mkCenterKey(pointCenterDist: ((Double, Double), ((Double, Double), Double))) = {
+    val (point, (center, dist)) = pointCenterDist
+    (center, point)
+  }
+  def getNewCenter(point1: (Double, Double), point2: (Double, Double)) = {
+    val (x1, y1) = point1
+    val (x2, y2) = point2
+    val x3 = (x1 + x2) / 2
+    val y3 = (y1 + y2) / 2
+    (x3, y3)
   }
   def main(args: Array[String]) {
     val Array(path, k, threshold) = parseArgs(args)
     val conf = new SparkConf().setAppName("KMeans").setMaster("local[*]")
     val sc = new SparkContext(conf)
     val inputRdd = sc.textFile(path).map(parseInput _)
-    val onePointRdd = sc.parallelize(Seq(inputRdd.first()))
-    val farthestPointsRdd = sc.parallelize(onePointRdd.cartesian(inputRdd).map(calcDist _).sortBy(_._3,false)
-                        .take(k.toInt - 1).map(_._2)).union(onePointRdd)
-    farthestPointsRdd.collect().foreach(println)
+    var centresRdd = sc.parallelize(inputRdd.takeSample(false, k.toInt))
+    var centersNewcentersDistRdd,crossThrshldRdd : RDD[((Double,Double),(Double,Double),Double)] = null
+    do {
+      centersNewcentersDistRdd = centresRdd.cartesian(inputRdd).map(calcDist _)           //calculate distance between each point and center points
+                                  .map(mkPointKey _).reduceByKey(getClosestCenter _)      //determine closest center for each point
+                                  .map(mkCenterKey _).reduceByKey(getNewCenter _)         //determine new center by taking mean of points closest to old center
+                                  .map(calcDist _).cache()                                //get distance between new and old centers
+      centresRdd = centersNewcentersDistRdd.map(_._2)                                     //get new centers for next iteration
+      crossThrshldRdd = centersNewcentersDistRdd.filter(_._3 > threshold.toDouble)        //filter for distance between new and old centers > threshold value
+    } while (!crossThrshldRdd.isEmpty)                                                    //if any distance greater than threshold continue next iteration
+    centresRdd.collect().foreach(println)
   }
 }
